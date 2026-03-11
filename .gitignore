@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Whisper models (large binaries)
+models/
+bin/
+
+# Runtime state
+.daemon-state/
+daemon.pid
+daemon.log
+
+# Secrets
+.env
+
+# Personal data (use *.example.md as templates)
+data/SOUL.md
+data/USER.md
+data/MEMORY.md
+
+# Claude Code local settings
+.claude/
+
+# Legacy docs
+ARCHITECTURE.txt
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
