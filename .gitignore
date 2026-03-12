@@ -20,6 +20,10 @@ daemon.log
 data/SOUL.md
 data/USER.md
 data/MEMORY.md
+data/logs/
+
+# Product spec (internal docs)
+spec-*.yaml
 
 # Claude Code local settings
 .claude/

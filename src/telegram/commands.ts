@@ -1,11 +1,12 @@
 import { routeOpCommand } from '../core/router.js';
 import { routeCcCommand } from '../core/cc-router.js';
 import { routeCxCommand } from '../core/cx-router.js';
-import { dispatchAsk } from '../core/ask-dispatcher.js';
+import { dispatchAsk, getAdapter } from '../core/ask-dispatcher.js';
 import { executorStore } from '../state/executor-store.js';
 import { requestStore } from '../state/request-store.js';
 import { conversationStore } from '../state/conversation.js';
 import { memoryStore } from '../state/memory.js';
+import { dailyLog } from '../state/daily-log.js';
 import type { EngineId, RequestRecord } from '../state/types.js';
 import { taskManager, formatTaskLine, statusEmoji } from '../tasks/manager.js';
 import { executeEditApply } from '../tasks/runner.js';
@@ -27,7 +28,11 @@ const syncCommands: Record<string, SyncCommandHandler> = {
         '/ask <内容>         - 统一请求入口（走当前执行器）',
         '/status             - 查看执行器和最近请求',
         '/mem                - 记忆管理 (on|off|show|add|del|clear|file)',
+        '/remember [提示]    - 提炼当前对话要点存入长期记忆',
+        '/log                - 查看日志状态 (summary=手动触发摘要)',
         '/new                - 清空当前对话历史',
+        '',
+        '自动机制：每日对话自动记录→次日提炼→5天压缩归档',
         '',
         '提示：直接发送纯文本 = /ask <文本>',
         '',
@@ -68,6 +73,16 @@ export async function handleCommand(
     return handleMemCommand(memArgs);
   }
 
+  if (command === '/remember') {
+    const hint = trimmed.slice(9).trim();
+    return handleRemember(chatId, hint);
+  }
+
+  if (command === '/log') {
+    const logArgs = trimmed.slice(4).trim();
+    return handleLog(logArgs);
+  }
+
   if (command === '/new') {
     conversationStore.clear(chatId);
     return { messages: ['对话历史已清空，开始新会话。'] };
@@ -100,7 +115,7 @@ export async function handleCommand(
 }
 
 export function getCommandList(): string[] {
-  return [...Object.keys(syncCommands), '/e', '/status', '/ask', '/mem', '/new', '/op', '/cc', '/cx', '/tasks', '/approve', '/deny', '/cancel'];
+  return [...Object.keys(syncCommands), '/e', '/status', '/ask', '/mem', '/remember', '/log', '/new', '/op', '/cc', '/cx', '/tasks', '/approve', '/deny', '/cancel'];
 }
 
 const VALID_ENGINES: EngineId[] = ['cc', 'cx', 'op'];
@@ -358,6 +373,83 @@ async function handleMemCommand(args: string): Promise<CommandResult> {
 
     default:
       return { messages: ['未知子命令。使用 /mem 查看帮助。'] };
+  }
+}
+
+async function handleLog(args: string): Promise<CommandResult> {
+  const sub = args.split(/\s+/)[0]?.toLowerCase() ?? '';
+
+  if (sub === 'summary') {
+    const result = await dailyLog.summarizeDay();
+    if (result) {
+      return { messages: [`已提炼昨日摘要并存入记忆：\n${result}`] };
+    }
+    return { messages: ['无昨日日志或已提炼过。'] };
+  }
+
+  // Default: show status
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+  const hasToday = await dailyLog.hasLog(today);
+  const hasYesterday = await dailyLog.hasLog(yesterday);
+
+  const entries = await memoryStore.getAll();
+  const dailyCount = entries.filter((e) => e.title.startsWith('daily:')).length;
+  const weeklyCount = entries.filter((e) => e.title.startsWith('weekly:')).length;
+
+  const lines = [
+    '日志系统状态：',
+    `今日日志 (${today})：${hasToday ? '有记录' : '暂无'}`,
+    `昨日日志 (${yesterday})：${hasYesterday ? '待提炼' : '已处理或无'}`,
+    `日报条目：${dailyCount} 条（超过 5 条自动压缩）`,
+    `周报条目：${weeklyCount} 条`,
+    `日志目录：${dailyLog.getLogsDir()}`,
+    '',
+    '用法：',
+    '/log          — 查看状态',
+    '/log summary  — 手动触发昨日摘要',
+  ];
+  return { messages: [lines.join('\n')] };
+}
+
+async function handleRemember(chatId: number, hint: string): Promise<CommandResult> {
+  const history = conversationStore.getContextString(chatId);
+  if (!history) {
+    return { messages: ['当前没有对话历史可提炼。先聊几句再试。'] };
+  }
+
+  const engine = await executorStore.getDefaultEngine();
+  const adapter = getAdapter(engine);
+
+  const extractPrompt = [
+    '你是一个记忆提炼助手。请从以下对话历史中提取值得长期记住的要点。',
+    hint ? `用户特别关注：${hint}` : '',
+    '要求：',
+    '- 输出格式：一行标题（20字以内），空一行后写要点内容',
+    '- 要点内容简洁精炼，保留关键信息，去掉寒暄和重复',
+    '- 如果对话中有多个独立话题，只提取最重要的一个',
+    '- 直接输出结果，不要加任何前缀说明',
+    '',
+    '对话历史：',
+    history,
+  ].filter(Boolean).join('\n');
+
+  try {
+    const result = await adapter.ask(extractPrompt);
+    const text = result.trim();
+
+    // Split first line as title, rest as content
+    const lines = text.split('\n');
+    const title = lines[0].replace(/^#+\s*/, '').slice(0, 30).trim();
+    const body = lines.slice(1).join('\n').trim() || title;
+
+    const entry = await memoryStore.add(title, body);
+    return {
+      messages: [`已提炼并保存记忆 #${entry.id}「${entry.title}」(~${entry.tokens} tokens)\n\n${body}`],
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { messages: [`提炼失败：${msg}`] };
   }
 }
 

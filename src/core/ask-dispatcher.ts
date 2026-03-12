@@ -9,6 +9,7 @@ import { executorStore } from '../state/executor-store.js';
 import { requestStore } from '../state/request-store.js';
 import { conversationStore } from '../state/conversation.js';
 import { memoryStore } from '../state/memory.js';
+import { dailyLog } from '../state/daily-log.js';
 import { getSoulPrompt, getUserPrompt } from '../state/bootstrap.js';
 import type { EngineId } from '../state/types.js';
 import { claudecodeAdapter } from '../runtimes/claudecode.js';
@@ -26,7 +27,7 @@ const ENGINE_LABELS: Record<EngineId, string> = {
   op: 'OpenCode（基础兜底模式）',
 };
 
-function getAdapter(engine: EngineId): RuntimeAdapter {
+export function getAdapter(engine: EngineId): RuntimeAdapter {
   switch (engine) {
     case 'cc': return claudecodeAdapter;
     case 'cx': return codexAdapter;
@@ -95,8 +96,9 @@ export async function dispatchAsk(
   const memoryEnabled = await executorStore.isMemoryEnabled();
   const request = await requestStore.create(engine, content);
 
-  // Record user message in conversation history
+  // Record user message in conversation history + daily log
   conversationStore.addUser(chatId, content);
+  void dailyLog.logMessage('user', content);
 
   // Fire-and-forget async execution
   void executeAsk(request.requestId, engine, content, chatId, memoryEnabled);
@@ -134,8 +136,10 @@ async function executeAsk(
 
     await requestStore.markCompleted(requestId, response);
 
-    // Record assistant response in conversation history
-    conversationStore.addAssistant(chatId, response.length > 500 ? response.slice(0, 497) + '...' : response);
+    // Record assistant response in conversation history + daily log
+    const truncated = response.length > 500 ? response.slice(0, 497) + '...' : response;
+    conversationStore.addAssistant(chatId, truncated);
+    void dailyLog.logMessage('assistant', truncated);
 
     // Send response directly — no header, like a real conversation
     const fullText = cleanMarkdown(response);

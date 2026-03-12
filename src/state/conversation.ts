@@ -10,7 +10,7 @@ export interface Turn {
 }
 
 const MAX_TURNS = 10;
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 min idle → auto-clear
+const SESSION_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours idle → auto-clear
 
 class ConversationStore {
   private histories: Map<number, Turn[]> = new Map();

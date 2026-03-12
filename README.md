@@ -37,8 +37,9 @@ Telegram Bot API
 
 - **Multi-engine routing** — Switch between Claude Code (`cc`), Codex (`cx`), and OpenCode (`op`) with `/e`
 - **Voice input** — Send voice messages; transcribed via Groq Whisper API (primary) or local whisper.cpp (fallback)
-- **Conversation history** — Short-term per-chat memory (10 turns, 30-min session timeout)
+- **Conversation history** — Short-term per-chat memory (10 turns, 2-hour session timeout)
 - **Long-term memory** — Persistent `/mem` system with token tracking, stored as Markdown
+- **Daily log & auto-summarize** — All conversations logged to daily files, auto-summarized next day, compacted into weekly summaries
 - **Personality system** — `SOUL.md` defines bot behavior, `USER.md` defines user profile
 - **Task management** — Plan-approve-apply workflow for code edits
 - **Security** — User allowlist by Telegram user ID
@@ -120,6 +121,8 @@ npx tsc && npm start
 | `/e [cc\|cx\|op]` | View or switch the default engine |
 | `/status [id]` | View engine status and recent requests |
 | `/mem` | Memory management (see below) |
+| `/remember [hint]` | Distill current conversation into long-term memory |
+| `/log` | Daily log status and manual summarization |
 | `/new` | Clear conversation history for current chat |
 | `/op <args>` | Direct OpenCode command |
 | `/cc <args>` | Direct Claude Code command |
@@ -139,7 +142,7 @@ npx tsc && npm start
 
 ### Short-term (automatic)
 
-Per-chat conversation history, up to 10 turns. Auto-clears after 30 minutes of inactivity. Always active — provides multi-turn coherence.
+Per-chat conversation history, up to 10 turns. Auto-clears after 2 hours of inactivity. Always active — provides multi-turn coherence.
 
 ### Long-term (`/mem`)
 
@@ -156,6 +159,24 @@ Persistent memory stored in `data/MEMORY.md`. Toggle on/off per session. When en
 ```
 
 Each entry tracks estimated token usage (~0.5 tokens/CJK char, ~0.25 tokens/Latin char).
+
+### Daily Log & Auto-Summarize
+
+All conversations are automatically logged to `data/logs/YYYY-MM-DD.txt` (plain text, zero token cost). This runs independently from the short-term conversation history.
+
+**Automatic pipeline:**
+
+1. **Daily logging** — Every message is appended to the day's log file
+2. **Next-day summarization** — On the first message of a new day, the previous day's log is sent to the LLM for distillation (~150 chars) and saved as a `daily:YYYY-MM-DD` memory entry
+3. **Weekly compaction** — When daily entries exceed 5, they are merged into a single `weekly:` summary (~300 chars)
+
+**Manual commands:**
+
+```
+/remember [hint] — Distill current conversation into memory (with optional focus hint)
+/log             — View daily log system status
+/log summary     — Manually trigger yesterday's summarization
+```
 
 ### Prompt Assembly Order
 
@@ -201,6 +222,7 @@ src/
 ├── state/
 │   ├── bootstrap.ts         # SOUL.md / USER.md loader
 │   ├── conversation.ts      # Short-term conversation history
+│   ├── daily-log.ts         # Daily log, auto-summarize, compaction
 │   ├── memory.ts            # Long-term persistent memory
 │   ├── executor-store.ts    # Engine selection + memory toggle
 │   ├── request-store.ts     # Request history tracking
@@ -222,7 +244,9 @@ src/
 data/
 ├── SOUL.md                  # Bot personality definition
 ├── USER.md                  # User profile
-└── MEMORY.md                # Long-term memory (auto-managed)
+├── MEMORY.md                # Long-term memory (auto-managed)
+└── logs/                    # Daily conversation logs (auto-rotated)
+    └── YYYY-MM-DD.txt       # One file per day
 ```
 
 ## Environment Variables

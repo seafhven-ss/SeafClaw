@@ -141,6 +141,16 @@ class MemoryStore {
     return true;
   }
 
+  async removeByTitlePrefix(prefix: string): Promise<MemoryEntry[]> {
+    await this.ensureLoaded();
+    const removed = this.entries!.filter((e) => e.title.startsWith(prefix));
+    if (removed.length > 0) {
+      this.entries = this.entries!.filter((e) => !e.title.startsWith(prefix));
+      await this.persist();
+    }
+    return removed;
+  }
+
   async clear(): Promise<number> {
     await this.ensureLoaded();
     const count = this.entries!.length;
